@@ -1,0 +1,14 @@
+# Copy to silero-dictionary.yaml, mount read-only and set SILERO_DICTIONARY_PATH.
+# Longest matching phrases win; replacements are literal and not recursive.
+pronunciations:
+  Home Assistant: х+оум асс+истент
+  MQTT: эм кью ти ти
+  Aqara: ак+ара
+abbreviations:
+  т. е.: то есть
+  т. д.: так далее
+stress:
+  звонит: звон+ит
+# Use phrase exceptions for homographs, rather than overriding every occurrence:
+# pronunciations:
+#   дверной замок: дверн+ой зам+ок

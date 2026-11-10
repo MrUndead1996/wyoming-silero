@@ -1,0 +1,3 @@
+# Keep the two binary packages compatible. Used by Docker and CI.
+torch==2.9.1
+torchaudio==2.9.1

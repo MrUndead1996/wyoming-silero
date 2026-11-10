@@ -1,7 +1,7 @@
 ---
 services:
   wyoming-silero:
-    image: ghcr.io/staastas/wyoming-silero:latest
+    image: ghcr.io/mrundead1996/wyoming-silero:edge
     container_name: wyoming-silero
     restart: unless-stopped
     ports:
@@ -9,9 +9,20 @@ services:
     environment:
       # Silero TTS Configuration
       SILERO_LANGUAGE: "ru"       # Internal code (ru, en, de, ua, etc.)
-      SILERO_MODEL: "v5_1_ru"     # Model name
+      SILERO_MODEL: "v5_6_ru"     # Model name
       SILERO_SPEAKER: "kseniya"   # Default speaker
       SILERO_SAMPLE_RATE: "48000" # Sample rate
+      # Text normalization (legacy preserves existing number behavior)
+      SILERO_NORMALIZATION_PROFILE: "enhanced" # legacy restores the old behavior
+      # SILERO_NORMALIZE_CLEANUP: "true"
+      # SILERO_NORMALIZE_DICTIONARY: "true"
+      # SILERO_NORMALIZE_ABBREVIATIONS: "true"
+      # SILERO_NORMALIZE_NUMBERS: "true"
+      # SILERO_NORMALIZE_DATES: "true"
+      # SILERO_NORMALIZE_UNITS: "true"
+      # SILERO_NORMALIZE_LATIN: "true"
+      # SILERO_STRESS_MODE: "model" # model, off, silero-stress
+      # SILERO_DICTIONARY_PATH: "/config/silero-dictionary.yaml"
       # SILERO_THREADS: "4"         # CPU threads for synthesis
       # SILERO_OFFLINE: "true"      # Do not re-download models.yml on every start
       # Global SSML Configuration (optional)
@@ -24,6 +35,7 @@ services:
       # WYOMING_DEBUG: "true"  # Uncomment for debug logging
     volumes:
       - ./silero-models:/app/silero/model  # Persist models and config
+      # - ./silero-dictionary.yaml:/config/silero-dictionary.yaml:ro
 
     # Optional: let Home Assistant discover the server automatically.
     # mDNS does not leave a bridge network, so this needs host networking

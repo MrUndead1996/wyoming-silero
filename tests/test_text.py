@@ -89,6 +89,16 @@ class TestSplitting:
         assert all(len(piece) <= 60 for piece in out)
         assert " ".join(out) == " ".join(["слово"] * 40)
 
+    def test_abbreviations_are_not_sentence_boundaries_in_streams(self):
+        text = "Это работает, т. е. свет включён. Следующее предложение готово."
+        expected = ["Это работает, т. е. свет включён.", "Следующее предложение готово."]
+        for size in range(1, len(text)):
+            splitter = SentenceSplitter()
+            pieces = []
+            for offset in range(0, len(text), size):
+                pieces.extend(splitter.add(text[offset:offset + size]))
+            assert pieces + splitter.finish() == expected
+
 
 def test_strip_ssml():
     assert strip_ssml("<speak>A &amp; B <break/>C</speak>") == "A & B C"

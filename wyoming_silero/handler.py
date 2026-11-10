@@ -25,11 +25,12 @@ from wyoming.tts import (
 from .text import (
     DEFAULT_MAX_CHARS,
     SentenceSplitter,
+    split_long,
     escape_ssml_text,
-    normalize_numbers,
     split_sentences,
     strip_ssml,
 )
+from .normalization import NormalizationConfig, StreamingCleaner, TextNormalizer
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -71,6 +72,7 @@ class _Request:
     # Streaming only: the sentence splitter, or the SSML collected so far.
     splitter: Optional[SentenceSplitter] = None
     ssml_parts: List[str] = field(default_factory=list)
+    cleaner: Optional[StreamingCleaner] = None
 
 
 class SileroEventHandler(AsyncEventHandler):
@@ -86,6 +88,7 @@ class SileroEventHandler(AsyncEventHandler):
         voice_languages: Dict[str, str],
         synthesis_lock: asyncio.Lock,
         *args,
+        normalizer: Optional[TextNormalizer] = None,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -100,8 +103,15 @@ class SileroEventHandler(AsyncEventHandler):
         # The model is shared by every connection; this keeps two requests
         # from running it at the same time.
         self.synthesis_lock = synthesis_lock
+        self.normalizer = normalizer or TextNormalizer(NormalizationConfig())
 
         self.text_arg, self.speaker_arg, self.supports_ssml = resolve_tts_api(model)
+        try:
+            model_params = inspect.signature(model.apply_tts).parameters
+        except (TypeError, ValueError):
+            model_params = {}
+        self._stress_flags = {name: False for name in ("put_accent", "put_yo") if name in model_params}
+        self._warned_stress_flags = False
 
         # Global SSML parameters
         self.prosody_rate = getattr(cli_args, 'prosody_rate', None)
@@ -124,6 +134,8 @@ class SileroEventHandler(AsyncEventHandler):
             self._stream = self._new_request(start.voice, start.text_format, "")
             if not self._stream.is_ssml:
                 self._stream.splitter = SentenceSplitter(self.max_chars)
+                if self._cleanup_enabled(self._stream):
+                    self._stream.cleaner = StreamingCleaner()
             _LOGGER.info("📝 Streaming synthesis started: speaker='%s', language='%s'",
                          self._stream.speaker, self._stream.language)
             return True
@@ -138,7 +150,8 @@ class SileroEventHandler(AsyncEventHandler):
                 # the end of the stream.
                 self._stream.ssml_parts.append(chunk.text)
                 return True
-            for sentence in self._stream.splitter.add(chunk.text):
+            text = self._stream.cleaner.add(chunk.text) if self._stream.cleaner else chunk.text
+            for sentence in self._stream.splitter.add(text):
                 await self._speak(self._stream, sentence)
             return True
 
@@ -150,6 +163,10 @@ class SileroEventHandler(AsyncEventHandler):
                 await self.write_event(SynthesizeStopped().event())
                 return True
             if request.splitter is not None:
+                if request.cleaner:
+                    tail = request.cleaner.finish()
+                    for sentence in request.splitter.add(tail):
+                        await self._speak(request, sentence)
                 for sentence in request.splitter.finish():
                     await self._speak(request, sentence)
             elif ''.join(request.ssml_parts).strip():
@@ -180,6 +197,9 @@ class SileroEventHandler(AsyncEventHandler):
             if request.is_ssml:
                 pieces = [text]
             else:
+                if self._cleanup_enabled(request):
+                    cleaner = StreamingCleaner()
+                    text = cleaner.add(text) + cleaner.finish()
                 pieces = split_sentences(text, self.max_chars)
             for piece in pieces:
                 await self._speak(request, piece)
@@ -232,8 +252,12 @@ class SileroEventHandler(AsyncEventHandler):
             text = strip_ssml(text)
             is_ssml = False
 
-        text = normalize_numbers(text, request.language, is_ssml=is_ssml)
-        return self._wrap_with_ssml(text, is_ssml)
+        text = self.normalizer.normalize(text, request.language, is_ssml=is_ssml)
+        return text, is_ssml
+
+    def _cleanup_enabled(self, request):
+        return (self.normalizer.config.profile == "enhanced" and self.normalizer.config.cleanup
+                and request.language.startswith("ru") and not request.is_ssml)
 
     def _wrap_with_ssml(self, text: str, is_ssml: bool = False) -> tuple:
         """Wrap text with the global prosody settings if configured."""
@@ -268,20 +292,33 @@ class SileroEventHandler(AsyncEventHandler):
         if not text.strip():
             return
 
-        model_text, is_ssml = self._prepare_text(request, text)
-        _LOGGER.debug("🎤 Synthesizing: %r", model_text)
+        try:
+            async with self.synthesis_lock:
+                normalized_text, is_ssml = await asyncio.get_running_loop().run_in_executor(
+                    None, self._prepare_text, request, text
+                )
+            # Number/date/unit expansions can exceed the original sentence limit.
+            pieces = [normalized_text] if is_ssml else split_long(normalized_text, self.max_chars)
+        except Exception as err:
+            _LOGGER.exception("Normalization failed for text %r", text[:100])
+            request.sentences_failed += 1
+            request.last_error = err
+            return
+        for model_piece in pieces:
+            model_piece, piece_ssml = self._wrap_with_ssml(model_piece, is_ssml)
+            await self._speak_prepared(request, model_piece, piece_ssml, text)
 
+    async def _speak_prepared(self, request, model_text, is_ssml, original_text):
+        _LOGGER.debug("🎤 Synthesizing: %r", model_text)
         synthesis_start = time.time()
         try:
             async with self.synthesis_lock:
-                audio_tensor = await asyncio.get_running_loop().run_in_executor(
-                    None, self._synthesize, model_text, request.speaker, is_ssml
-                )
+                audio_tensor = await asyncio.get_running_loop().run_in_executor(None, self._synthesize, model_text, request.speaker, is_ssml, request.language)
         except Exception as err:
             # Skip this piece but keep going, so one bad sentence does not
             # silence the whole answer.
             _LOGGER.exception("❌ Synthesis failed after %.2f seconds for text %r",
-                              time.time() - synthesis_start, text[:100])
+                              time.time() - synthesis_start, original_text[:100])
             request.sentences_failed += 1
             request.last_error = err
             return
@@ -331,13 +368,18 @@ class SileroEventHandler(AsyncEventHandler):
                      time.time() - request.started_at, request.audio_seconds,
                      request.sentences_ok, request.sentences_failed)
 
-    def _synthesize(self, text: str, speaker: str, is_ssml: bool = False):
+    def _synthesize(self, text: str, speaker: str, is_ssml: bool = False, language: str = ""):
         """Synthesize text using the loaded model. Raises on failure."""
         kwargs = {self.speaker_arg: speaker, "sample_rate": self.sample_rate}
         if is_ssml:
             kwargs["ssml_text"] = text
         else:
             kwargs[self.text_arg] = text
+        if self.normalizer.config.stress in {"off", "silero-stress"} and language.startswith("ru"):
+            kwargs.update(self._stress_flags)
+            if len(self._stress_flags) < 2 and not self._warned_stress_flags:
+                _LOGGER.warning("Model API does not expose both put_accent and put_yo; stress settings are best-effort")
+                self._warned_stress_flags = True
 
         audio = self.model.apply_tts(**kwargs)
 

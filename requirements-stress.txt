@@ -1,0 +1,2 @@
+# Optional accentor used only when SILERO_STRESS_MODE=silero-stress.
+silero-stress==1.5

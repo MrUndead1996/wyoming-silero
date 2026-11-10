@@ -15,9 +15,11 @@ setup(
         "scipy",
         "omegaconf",
         "PyYAML",
-        "num2words",
+        "num2words>=0.5.14,<0.6",
+        "cmudict>=1.1.3,<2",
         "zeroconf",
     ],
+    extras_require={"silero-stress": ["silero-stress==1.5"]},
     entry_points={
         "console_scripts": [
             "wyoming-silero = wyoming_silero.__main__:run"

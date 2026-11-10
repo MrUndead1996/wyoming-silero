@@ -19,6 +19,7 @@ from wyoming.server import AsyncServer
 from .handler import SileroEventHandler, resolve_tts_api
 from .loader import load_silero_model
 from .text import DEFAULT_MAX_CHARS, parse_break_ms
+from .normalization import NormalizationConfig, TextNormalizer
 from . import __version__
 
 _LOGGER = logging.getLogger(__name__)
@@ -41,8 +42,33 @@ SPEAKER_PREFIX_TO_LANG = {
 HIDDEN_SPEAKERS = {"random"}
 
 
-def _env_flag(name: str) -> bool:
-    return os.getenv(name, "false").strip().lower() in ("1", "true", "yes", "on")
+def _env_flag(name: str, strict: bool = False) -> bool:
+    value = os.getenv(name, "false").strip().lower()
+    if strict and value not in {"1", "true", "yes", "on", "0", "false", "no", "off"}:
+        raise argparse.ArgumentTypeError(f"{name} must be a boolean (true/false, yes/no, 1/0, on/off)")
+    return value in {"1", "true", "yes", "on"}
+
+
+def _normalization_arguments(parser):
+    parser.add_argument("--normalization-profile", choices=("legacy", "enhanced"), default=os.getenv("SILERO_NORMALIZATION_PROFILE", "legacy"))
+    for key in ("cleanup", "dictionary", "abbreviations", "numbers", "dates", "units", "latin"):
+        env_name = "SILERO_NORMALIZE_" + key.upper()
+        try:
+            default = _env_flag(env_name, strict=True) if env_name in os.environ else True
+        except argparse.ArgumentTypeError as exc:
+            parser.error(str(exc))
+        parser.add_argument("--normalize-" + key, action=argparse.BooleanOptionalAction, default=default)
+    parser.add_argument("--stress-mode", choices=("model", "off", "silero-stress"), default=os.getenv("SILERO_STRESS_MODE", "model"))
+    parser.add_argument("--dictionary-path", default=os.getenv("SILERO_DICTIONARY_PATH"))
+
+
+def _normalization_config(args):
+    return NormalizationConfig(
+        profile=args.normalization_profile, cleanup=args.normalize_cleanup,
+        dictionary=args.normalize_dictionary, abbreviations=args.normalize_abbreviations,
+        numbers=args.normalize_numbers, dates=args.normalize_dates, units=args.normalize_units,
+        latin=args.normalize_latin, stress=args.stress_mode, dictionary_path=args.dictionary_path,
+    )
 
 
 def describe_voice(speaker_name: str, language: str) -> str:
@@ -134,8 +160,13 @@ async def main() -> None:
     parser.add_argument("--zeroconf-host", default=os.getenv("WYOMING_ZEROCONF_HOST"), help="IP address announced over mDNS (auto-detected by default)")
 
     parser.add_argument("--debug", action="store_true", default=_env_flag("WYOMING_DEBUG"), help="Log DEBUG messages")
+    _normalization_arguments(parser)
 
     args = parser.parse_args()
+    try:
+        normalization_config = _normalization_config(args)
+    except (ValueError, OSError) as exc:
+        parser.error(str(exc))
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO)
 
     if not args.uri:
@@ -154,6 +185,11 @@ async def main() -> None:
     if args.threads > 0:
         torch.set_num_threads(args.threads)
 
+    try:
+        normalizer = TextNormalizer(normalization_config)
+    except (ValueError, OSError) as exc:
+        parser.error(str(exc))
+
     _LOGGER.info("="*60)
     _LOGGER.info("🚀 Starting Wyoming Silero TTS Server")
     _LOGGER.info("="*60)
@@ -162,6 +198,7 @@ async def main() -> None:
     _LOGGER.info("   Model: %s", args.model)
     _LOGGER.info("   Speaker: %s", args.speaker or "auto")
     _LOGGER.info("   Sample Rate: %d Hz", args.sample_rate)
+    _LOGGER.info("   Normalization: %s, stress: %s", normalization_config.profile, normalization_config.stress)
     if args.prosody_rate or args.prosody_pitch or args.break_time or args.break_strength:
         _LOGGER.info("   Global SSML:")
         if args.prosody_rate:
@@ -305,6 +342,7 @@ async def main() -> None:
             ha_language,
             voice_languages,
             asyncio.Lock(),
+            normalizer=normalizer,
         )
     )
 

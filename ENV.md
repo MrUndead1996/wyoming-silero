@@ -4,6 +4,40 @@ This file documents all available environment variables for configuring Wyoming 
 
 ## Silero TTS Configuration
 
+### Text normalization
+
+Normalization defaults to `legacy`, preserving the existing number-normalization path. `enhanced` activates the composable normalization pipeline; toggles below are independent and default to `true`. Cleanup applies only to enhanced Russian plain-text requests and happens before sentence splitting. SSML is not passed through streaming cleanup. Expanded sentences are split again to respect `SILERO_MAX_CHARS`.
+
+| Variable | CLI option | Default | Meaning |
+| --- | --- | --- | --- |
+| `SILERO_NORMALIZATION_PROFILE` | `--normalization-profile` | `legacy` | `legacy` or `enhanced` |
+| `SILERO_NORMALIZE_CLEANUP` | `--[no-]normalize-cleanup` | `true` | Remove supported markdown/code/think markup in enhanced Russian plain text |
+| `SILERO_NORMALIZE_DICTIONARY` | `--[no-]normalize-dictionary` | `true` | Apply local pronunciation and stress dictionary |
+| `SILERO_NORMALIZE_ABBREVIATIONS` | `--[no-]normalize-abbreviations` | `true` | Expand user and built-in abbreviations |
+| `SILERO_NORMALIZE_NUMBERS` | `--[no-]normalize-numbers` | `true` | Spell numbers and valid Russian times |
+| `SILERO_NORMALIZE_DATES` | `--[no-]normalize-dates` | `true` | Speak valid `DD.MM.YYYY` and `YYYY-MM-DD` dates |
+| `SILERO_NORMALIZE_UNITS` | `--[no-]normalize-units` | `true` | Speak configured common Russian units |
+| `SILERO_NORMALIZE_LATIN` | `--[no-]normalize-latin` | `true` | Apply built-in and fallback Latin pronunciation |
+| `SILERO_STRESS_MODE` | `--stress-mode` | `model` | `model`, `off`, or `silero-stress` |
+| `SILERO_DICTIONARY_PATH` | `--dictionary-path` | unset | Optional local YAML file |
+
+All boolean environment values must be one of `true/false`, `yes/no`, `on/off`, or `1/0` (case-insensitive). The local YAML document has optional `pronunciations`, `abbreviations`, and `stress` string-to-string mappings. Example:
+
+```yaml
+pronunciations:
+  Home Assistant: хоум ассистант
+abbreviations:
+  т. е.: то есть
+stress:
+  замок: за+мок
+```
+
+For example, mount the file read-only at `/config/silero-dictionary.yaml` and set `SILERO_DICTIONARY_PATH` to that path. `model` leaves accentuation to Silero, `off` disables `put_accent`/`put_yo` where the model API exposes them, and `silero-stress` uses the optional external accentor. The default Docker image installs that optional package; custom installs can use `requirements-stress.txt`. Latin fallback transliteration is approximate; unit inflection is curated rather than a general Russian morphology system.
+
+Local pronunciation/stress entries are controlled by `DICTIONARY`; local abbreviation entries by `ABBREVIATIONS`; built-in technical names and CMUdict by `LATIN`. These switches are independent. Units and dates expand their own numbers even if the bare-number stage is disabled. Non-Russian voices retain the original number-normalization behavior. The `legacy` profile bypasses all enhanced stages; `NUMBERS=false` also disables its original number processing. Stress mode controls model flags independently of the profile, but external accentuation requires `enhanced`.
+
+Manual stress is always retained. A `+` precedes the stressed vowel; Unicode acute follows it (`за́мок` becomes `з+амок`). Use phrase exceptions for ambiguous homographs. The dictionary is validated and loaded once at startup; restart after edits.
+
 ### SILERO_LANGUAGE
 - **Description**: Language code for TTS model
 - **Default**: `en`
@@ -14,7 +48,7 @@ This file documents all available environment variables for configuring Wyoming 
 - **Description**: TTS model name
 - **Default**: `v3_en`
 - **Options**:
-  - Russian: `v5_1_ru`, `v5_ru`, `v4_ru`, `v5_cis_base`, `v5_cis_ext`
+  - Russian: `v5_6_ru`, `v5_1_ru`, `v5_ru`, `v4_ru`, `v5_cis_base`, `v5_cis_ext`
   - English: `v3_en`, `v3_en_indic`
   - German: `v3_de`
   - Spanish: `v3_es`

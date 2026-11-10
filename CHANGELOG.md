@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### New
+
+- Optional enhanced Russian text normalization with per-feature environment and CLI toggles, request-scoped streaming cleanup, local pronunciation/abbreviation/stress dictionaries, and selectable stress handling.
+- Docker images include the optional `silero-stress` package; custom installations can opt in with `requirements-stress.txt`.
+- Expanded text is split again before synthesis to remain within the configured model input limit.
+
+### Compatibility
+
+- The `legacy` normalization profile remains the default and preserves existing number normalization. No cleanup or enhanced dictionaries run unless the enhanced profile is selected.
+
 ## 1.1.0
 
 ### Highlights

@@ -1,5 +1,6 @@
 # Multi-stage build for smaller final image
 FROM python:3.14-slim-bookworm AS builder
+ARG INSTALL_STRESS=true
 
 # Install build dependencies
 RUN apt-get update && \
@@ -14,8 +15,12 @@ RUN python -m venv /opt/venv
 ENV PATH=/opt/venv/bin:$PATH
 WORKDIR /build
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt \
-    --extra-index-url https://download.pytorch.org/whl/cpu
+COPY requirements-cpu.txt .
+RUN pip install --no-cache-dir -r requirements-cpu.txt \
+    --index-url https://download.pytorch.org/whl/cpu && \
+    pip install --no-cache-dir -r requirements.txt
+COPY requirements-stress.txt .
+RUN if [ "$INSTALL_STRESS" = "true" ]; then pip install --no-cache-dir -r requirements-stress.txt; fi
 
 
 # Final stage
@@ -24,7 +29,7 @@ FROM python:3.14-slim-bookworm
 # Add labels for metadata
 LABEL org.opencontainers.image.title="Wyoming Silero TTS"
 LABEL org.opencontainers.image.description="Wyoming protocol server for Silero Text-to-Speech"
-LABEL org.opencontainers.image.source="https://github.com/staastas/wyoming-silero"
+LABEL org.opencontainers.image.source="https://github.com/MrUndead1996/wyoming-silero"
 LABEL org.opencontainers.image.licenses="MIT"
 
 # Install runtime dependencies

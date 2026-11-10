@@ -23,6 +23,7 @@ TAG_PATTERN = re.compile(r'<[^>]*>')
 # "3.5" and "example.com" in one piece, and in streaming mode it means a chunk
 # ending in "3." is not cut before the "5" arrives.
 SENTENCE_END_PATTERN = re.compile(r'[.!?…]+[»"”’)\]]*\s+|\n+')
+ABBREVIATION_END_PATTERN = re.compile(r'(?:\bт\.|\bт\.\s*(?:е|д|п)\.|\bг\.|\bул\.|\bим\.)\s*$', re.IGNORECASE)
 
 # Places where an over-long sentence can be cut without breaking a word.
 CLAUSE_END_PATTERN = re.compile(r'[,;:]\s|\s[—–-]\s')
@@ -280,6 +281,9 @@ class SentenceSplitter:
 
         position = 0
         for match in SENTENCE_END_PATTERN.finditer(self._buffer):
+            boundary = self._buffer[position:match.end()].rstrip()
+            if match.group(0).lstrip().startswith('.') and ABBREVIATION_END_PATTERN.search(boundary):
+                continue
             self._pending += self._buffer[position:match.end()]
             position = match.end()
             if len(self._pending.strip()) >= self.min_chars:
